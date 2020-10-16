@@ -23,6 +23,19 @@ const uuidv4 = uuid();
 app.use(body_parser.json());
 app.use(body_parser.urlencoded());
 
+const bot_questions ={
+"q3": "Please enter your name",
+"q4": "Please enter phone no",
+"q5": "Please enter email",
+"q6": "Please leave a message"
+}
+
+let current_question = '';
+
+let user_id = '';
+
+let userInputs = [];
+
 /*
 var storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -83,6 +96,14 @@ app.post('/webhook', (req, res) => {
       let webhook_event = entry.messaging[0];
       let sender_psid = webhook_event.sender.id; 
 
+      user_id = sender_psid;
+      
+      if(!userInputs[user_id]){
+        userInputs[user_id]={}; 
+      }
+      
+     
+
       if (webhook_event.message) {
         if(webhook_event.message.quick_reply){
             handleQuickReply(sender_psid, webhook_event.message.quick_reply.payload);
@@ -120,6 +141,64 @@ app.post('/test',function(req,res){
     const sender_psid = req.body.sender_id;     
     let response = {"text": "You  click delete button"};
     callSend(sender_psid, response);
+});
+
+app.get('/admin/orders', async function(req,res){
+  const ordersRef = db.collection('orders');
+  const snapshot = await ordersRef.get();
+  if(snapshot.empty){
+    res.send('no data');
+  }
+
+  let data = [];
+
+  snapshot.forEach(doc => {
+    let order ={};
+    order = doc.data();
+    order.doc_id = doc.id;
+
+    data.push(order);
+    
+  });
+
+  console.log('DATA:', data);
+
+  res.render('orders.ejs', {data:data});
+});
+
+app.get('/admin/updateorder/:doc_id', async function(req,res){
+  let doc_id = req.params.doc_id;
+    
+  const orderRef = db.collection('orders').doc(doc_id);
+  const doc = await orderRef.get();
+  if (!doc.exists){
+    console.log('No such document!');s
+  }else{
+    console.log('Document data:', doc.data());
+    let data = doc.data();
+    data.doc_id = doc_id;
+
+    console.log('Document data:', data);
+    res.render('editorders.ejs',{data:data});
+  }
+});
+
+app.post('/admin/updateorder/', async function(req,res){
+  console.log('REQ:', req.body);
+
+  // const orderRef = db.collection('orders').doc('DC');
+  // const res  = await orderRef.update
+    
+  res.send('ok');
+  // const orderRef = db.collection('orders').doc(doc_id);
+  // const doc = await orderRef.get();
+  // if (!doc.exists){
+  //   console.log('No such document!');s
+  // }else{
+  //   console.log('Document data:', doc.data());
+  //   let data = doc.data();
+  //   res.render('editorders.ejs',{data:data});
+  // }
 });
 
 /*********************************************
@@ -228,31 +307,23 @@ app.post('/webview',upload.single('file'),function(req,res){
 
       let file = req.file;
       if (file) {
-        uploadImageToStorage(file).then((success) => {
-          console.log('SUCCESS', success);
-          res.status(200).send({
-            status: 'success'
-          });
+        uploadImageToStorage(file).then((img_url ) => {
+         db.collection('webview').add({
+            name: name,
+            email: email,
+            image: img_url
+            }).then(success => {   
+               console.log("DATA SAVED")
+               thankyouReply(sender, name, img_url);    
+            }).catch(error => {
+              console.log(error);
+            });
         }).catch((error) => {
           console.error(error);
         });
       }
-
-
-
-     
-      
-      
-      /*db.collection('webview').add({
-            name: name,
-           email: email,
-            image: img_url
-          }).then(success => {   
-             console.log("DATA SAVED")
-             thankyouReply(sender, name, img_url);    
-          }).catch(error => {
-            console.log(error);
-      });   */     
+ 
+              
 });
 
 //Set up Get Started Button. To run one time
@@ -306,16 +377,36 @@ Function to Handle when user send quick reply message
 
 function handleQuickReply(sender_psid, received_message) {
   
-  switch(received_message) {        
+  console.log('QUICK REPLY', received_message);
+
+  received_message=received_message.toLowerCase();
+
+  if(received_message.startsWith("visit:")){
+    let visit=received_message.slice(6);
+    userInputs[user_id].visit=visit;
+    current_question='q3';
+    botQuestions(current_question, sender_psid);
+  }else if(received_message.startsWith("product:")){
+    let r_f=received_message.slice(9);
+    userInputs[user_id].order=r_f;
+    showProduct(sender_psid);
+
+  }else{
+    switch(received_message) {     
         case "on":
             showQuickReplyOn(sender_psid);
           break;
-        case "off":
+        case "off":w
             showQuickReplyOff(sender_psid);
-          break;                
+          break;   
+        case "confirm-order":
+            saveProductOrder(userInputs[user_id], sender_psid);
+          break;             
         default:
             defaultReply(sender_psid);
   } 
+}
+  
  
 }
 
@@ -324,22 +415,51 @@ Function to Handle when user send text message
 ***********************************************/
 
 const handleMessage = (sender_psid, received_message) => {
+
+  console.log('TEXT REPLY', received_message);
   //let message;
   let response;
 
   if(received_message.attachments){
      handleAttachments(sender_psid, received_message.attachments);
-  } else {
+  }else if(current_question == 'q3'){
+    console.log('FULL NAME ENTERED',received_message.text);
+    userInputs[user_id].name=received_message.text;
+    current_question='q4';
+    botQuestions(current_question,sender_psid);
+  }else if(current_question == 'q4'){
+    console.log('PHONE ENTERED',received_message.text);
+    userInputs[user_id].phone=received_message.text;
+    current_question='q5';
+    botQuestions(current_question,sender_psid);
+  }else if(current_question == 'q5'){
+    console.log('EMAIL ENTERED',received_message.text);
+    userInputs[user_id].email=received_message.text;
+    current_question='q6';
+    botQuestions(current_question,sender_psid);
+  }else if(current_question == 'q6'){
+    console.log('MESSAGE ENTERED',received_message.text);
+    userInputs[user_id].message=received_message.text;
+    current_question='';
+
+    confirmAppointment(sender_psid);
+  }
+
+  else {
       
       let user_message = received_message.text;
 
-      console.log('USER MESSAGE', user_message);
-     
       user_message = user_message.toLowerCase(); 
 
       switch(user_message) { 
       case "hi":
           hiReply(sender_psid);
+        break;
+      case "mingalarbar":
+          greetInMyanmar(sender_psid);
+        break;
+      case "order":
+          order(sender_psid);
         break;
       case "text":
         textReply(sender_psid);
@@ -348,7 +468,6 @@ const handleMessage = (sender_psid, received_message) => {
         quickReply(sender_psid);
         break;
       case "button":
-        console.log('CASE: BUTTON');            
         buttonReply(sender_psid);
         break;
       case "webview":
@@ -370,6 +489,7 @@ const handleMessage = (sender_psid, received_message) => {
 Function to handle when user send attachment
 **********************************************/
 const handleAttachments = (sender_psid, attachments) => {
+  console.log('ATTACHMENT REPLY', attachments);
   let response; 
   let attachment_url = attachments[0].payload.url;
     response = {
@@ -405,8 +525,19 @@ const handleAttachments = (sender_psid, attachments) => {
 Function to handle when user click button
 **********************************************/
 const handlePostback = (sender_psid, received_postback) => {
+  
   let payload = received_postback.payload;
-  switch(payload) {        
+  console.log('BUTTON PAYLOAD', payload);
+  
+  if(payload.startsWith("Product:")){
+    let product_type=payload.slice(5);
+    console.log("SELECTED PRODUCT IS: ", product_type);
+    userInputs[user_id].product=product_type;
+    console.log('TEST',userInputs);
+    firstOrFollowup(sender_psid);
+  }
+  else{
+      switch(payload) {        
       case "yes":
           showButtonReplyYes(sender_psid);
         break;
@@ -415,13 +546,14 @@ const handlePostback = (sender_psid, received_postback) => {
         break;                      
       default:
           defaultReply(sender_psid);
-  } 
+    }     
+  }
 }
 
 
 const generateRandom = (length) => {
    var result           = '';
-   var characters       = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+   var characters       = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
    var charactersLength = characters.length;
    for ( var i = 0; i < length; i++ ) {
       result += characters.charAt(Math.floor(Math.random() * charactersLength));
@@ -465,10 +597,6 @@ END GALLERY SAMPLE
 **********************************************/
 
 
-
-
-
-
 function webviewTest(sender_psid){
   let response;
   response = {
@@ -482,7 +610,7 @@ function webviewTest(sender_psid){
               {
                 "type": "web_url",
                 "title": "webview",
-                "url":"https://fbstarter.herokuapp.com/webview/"+sender_psid,
+                "url":APP_URL+"webview/"+sender_psid,
                  "webview_height_ratio": "full",
                 "messenger_extensions": true,          
               },
@@ -496,10 +624,164 @@ function webviewTest(sender_psid){
 }
 
 
+/****************
+start product 
+****************/
+const order =(sender_psid) => {
+  let response1 = {"text": "Welcome to SENG Shop"};
+  let response2 = {
+    "text": "Please Select Oil Cake or Peanut Oil",
+    "quick_replies":[
+            {
+              "content_type":"text",
+              "title":"Oil Cake",
+              "payload":"product:Product",              
+            },{
+              "content_type":"text",
+              "title":"Peanut Oil",
+              "payload":"product:Food",             
+            }
+    ]
+  };
+  callSend(sender_psid, response1).then(()=>{
+    return callSend(sender_psid, response2);
+  });
+
+}
+
+const showProduct =(sender_psid) => {
+  let response = {
+      "attachment": {
+        "type": "template",
+        "payload": {
+          "template_type": "generic",
+          "elements": [{
+            "title": "Wall Putty",
+            "subtitle": "Go Mix",
+            "image_url":"https://cdn.openpr.com/S/8/S819173533_g.jpg", 
+            "buttons": [
+                {
+                  "type": "postback",
+                  "title": "Go Mix",
+                  "payload": "Product:Go Mix",
+                }
+              ],
+          },
+          {
+            "title": "Pipe Line",
+            "subtitle": "Product of Myanmar",
+            "image_url":"https://www.myanmarbusiness-directory.com/digital-packages/files/dce1a860-7673-4422-a54d-17418801dda2/Product_Photos/Pipe-II-Pipe_Water-Pipes-%26-Accessories_%28A%29_501_%28photo01%29.jpg",                       
+            "buttons": [
+                {
+                  "type": "postback",
+                  "title": "Pipe",
+                  "payload": "Product:Pipe",
+                }
+              ],
+          }
+          ]
+        }
+      }
+    }
+  callSend(sender_psid, response);
+
+}
+
+const firstOrFollowup =(sender_psid) => {  
+  let response = {
+    "text": "First Time Visit or Follow Up?",
+    "quick_replies":[
+            {
+              "content_type":"text",
+              "title":"First Time",
+              "payload":"visit:first time",              
+            },{
+              "content_type":"text",
+              "title":"Follow Up",
+              "payload":"visit:follow up",             
+            }
+    ]
+  };
+  callSend(sender_psid, response);
+}
+
+const botQuestions = (current_question,sender_psid) => {
+  if(current_question =='q3'){
+    let response = {"text": bot_questions.q3};
+  callSend(sender_psid, response);
+  }else if(current_question =='q4'){
+    let response = {"text": bot_questions.q4};
+  callSend(sender_psid, response);
+  }else if(current_question =='q5'){
+    let response = {"text": bot_questions.q5};
+  callSend(sender_psid, response);
+  }else if(current_question =='q6'){
+    let response = {"text": bot_questions.q6};
+  callSend(sender_psid, response);
+  }
+
+}
+
+const confirmAppointment = (sender_psid) => {
+  console.log('ORDER INFO',userInputs);
+   let Summary = "order:" + userInputs[user_id].order + "\u000A";
+   Summary += "product:" + userInputs[user_id].product + "\u000A";
+   Summary += "visit:" + userInputs[user_id].visit + "\u000A";
+   Summary += "name:" + userInputs[user_id].name + "\u000A";
+   Summary += "phone:" + userInputs[user_id].phone + "\u000A";
+   Summary += "email:" + userInputs[user_id].email + "\u000A";
+   Summary += "message:" + userInputs[user_id].message + "\u000A";
+   
+  let response1 = {"text": Summary};
+
+
+  let response2 = {
+    "text": "Select your reply",
+    "quick_replies":[
+            {
+              "content_type":"text",
+              "title":"Confirm",
+              "payload":"confirm-order",              
+            },{
+              "content_type":"text",
+              "title":"Cancel",
+              "payload":"off",             
+            }
+    ]
+  };
+  callSend(sender_psid, response1).then(() => {
+    return callSend(sender_psid, response2);
+  });
+
+  }
+  
+const saveProductOrder = async (arg, sender_psid) =>{
+  let data=arg;
+  data.ref= generateRandom(6);
+  data.status = "pending";
+  db.collection('orders').add(data).then((success)=>{
+      console.log("SAVED", success);
+      let text = "Thank you. We have received your order."+ "\u000A";
+      text += "We will call you very soon to confirm"+ "\u000A";
+      text +="Your Order reference number is:" + data.ref;
+      let response = {"text": text};
+      callSend(sender_psid, response);
+    }).catch((err)=>{
+        console.log('Error', err);
+    });
+  }
+/****************
+end product 
+****************/
 
 
 const hiReply =(sender_psid) => {
-  let response = {"text": "You sent hi message"};
+  let response = {"text": "Hello user, you can make product ordering"};
+  callSend(sender_psid, response);
+}
+
+const greetInMyanmar =(sender_psid) => {
+  let response = {"text": "Mingalarbar. How May I Help you?"};
   callSend(sender_psid, response);
 }
 
